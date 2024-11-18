@@ -33,6 +33,8 @@ type CommandData struct {
 	Args    []string
 }
 
+//TODO:commands should be case insensetive
+
 func main() {
 	fmt.Println("Server listening on port 6379...")
 
@@ -86,8 +88,8 @@ func handle_connection(connection net.Conn, db DB) {
 			}
 		}()
 
-		switch data.Command {
-		case CmdPing:
+		switch {
+		case strings.EqualFold(CmdPing, data.Command):
 			response := "+PONG\r\n"
 			_, writeErr := connection.Write([]byte(response))
 			if writeErr != nil {
@@ -95,7 +97,7 @@ func handle_connection(connection net.Conn, db DB) {
 				break
 			}
 
-		case CmdEcho:
+		case strings.EqualFold(CmdEcho, data.Command):
 			if len(data.Args) == 0 {
 				fmt.Println("No arguments provided")
 				break
@@ -108,7 +110,7 @@ func handle_connection(connection net.Conn, db DB) {
 				break
 			}
 
-		case CmdSet:
+		case strings.EqualFold(CmdSet, data.Command):
 			if len(data.Args) < 2 {
 				fmt.Println("Not enough arguments provided")
 				break
@@ -122,7 +124,7 @@ func handle_connection(connection net.Conn, db DB) {
 				fmt.Println("Error write stream to client", err)
 				break
 			}
-		case CmdGet:
+		case strings.EqualFold(CmdGet, data.Command):
 			val, ok := db.entries[data.Args[0]]
 			if ok {
 				response := "$" + strconv.Itoa(len(val)) + "\r\n" + val + "\r\n"
