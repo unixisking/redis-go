@@ -20,7 +20,18 @@ const (
 	// RESP Commands
 	CmdPing = "PING"
 	CmdEcho = "ECHO"
+	CmdSet  = "SET"
+	CmdGet  = "GET"
 )
+
+type DB struct {
+	entries map[string]string
+}
+
+type CommandData struct {
+	Command string
+	Args    []string
+}
 
 func main() {
 	fmt.Println("Server listening on port 6379...")
@@ -32,6 +43,8 @@ func main() {
 	}
 	defer l.Close()
 
+	db := DB{entries: make(map[string]string)}
+
 	for {
 		connection, err := l.Accept()
 		if err != nil {
@@ -39,11 +52,11 @@ func main() {
 			continue
 		}
 
-		go handle_connection(connection)
+		go handle_connection(connection, db)
 	}
 }
 
-func handle_connection(connection net.Conn) {
+func handle_connection(connection net.Conn, db DB) {
 	defer connection.Close()
 
 	buffer := make([]byte, 1024)
@@ -61,16 +74,19 @@ func handle_connection(connection net.Conn) {
 		receivedData := buffer[:n]
 		fmt.Printf("Received: %q\n", receivedData)
 
-		command, data := func() (string, string) {
+		data := func() CommandData {
 			parsed := parseCommand(string(receivedData))
 			if len(parsed) == 1 {
 				parsed = append(parsed, "")
 			}
 
-			return parsed[0], parsed[1]
+			return CommandData{
+				Command: parsed[0],
+				Args:    parsed[1:],
+			}
 		}()
 
-		switch command {
+		switch data.Command {
 		case CmdPing:
 			response := "+PONG\r\n"
 			_, writeErr := connection.Write([]byte(response))
@@ -78,13 +94,53 @@ func handle_connection(connection net.Conn) {
 				fmt.Println("Error write stream to client", err)
 				break
 			}
+
 		case CmdEcho:
-			response := "$" + strconv.Itoa(len(data)) + "\r\n" + data + "\r\n"
+			if len(data.Args) == 0 {
+				fmt.Println("No arguments provided")
+				break
+			}
+			argsLength := strconv.Itoa(len(data.Args[0]))
+			response := "$" + argsLength + "\r\n" + data.Args[0] + "\r\n"
 			_, writeErr := connection.Write([]byte(response))
 			if writeErr != nil {
 				fmt.Println("Error write stream to client", err)
 				break
 			}
+
+		case CmdSet:
+			if len(data.Args) < 2 {
+				fmt.Println("Not enough arguments provided")
+				break
+			}
+			key := data.Args[0]
+			val := data.Args[1]
+			response := "+OK\r\n"
+			db.entries[key] = val
+			_, writeErr := connection.Write([]byte(response))
+			if writeErr != nil {
+				fmt.Println("Error write stream to client", err)
+				break
+			}
+		case CmdGet:
+			val, ok := db.entries[data.Args[0]]
+			if ok {
+				response := "$" + strconv.Itoa(len(val)) + "\r\n" + val + "\r\n"
+				_, writeErr := connection.Write([]byte(response))
+				if writeErr != nil {
+					fmt.Println("Error write stream to client", err)
+					break
+				}
+			} else {
+				_, writeErr := connection.Write([]byte("$-1\r\n"))
+				if writeErr != nil {
+					fmt.Println("Error write stream to client", err)
+					break
+				}
+			}
+		default:
+			fmt.Println("Unknown command, please check the help manual for suppoorted commands")
+			break
 		}
 	}
 }
