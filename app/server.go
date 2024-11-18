@@ -6,6 +6,20 @@ import (
 	"io"
 	"net"
 	"os"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+const (
+	// RESP Data Types
+	RespSimpleString = '+'
+	RespBulkString   = '$'
+	RespArray        = '*'
+
+	// RESP Commands
+	CmdPing = "PING"
+	CmdEcho = "ECHO"
 )
 
 func main() {
@@ -19,22 +33,22 @@ func main() {
 	defer l.Close()
 
 	for {
-		conn, err := l.Accept()
+		connection, err := l.Accept()
 		if err != nil {
 			fmt.Println("Error accepting connection: ", err.Error())
 			continue
 		}
 
-		go handle_connection(conn)
+		go handle_connection(connection)
 	}
 }
 
-func handle_connection(c net.Conn) {
-	defer c.Close()
+func handle_connection(connection net.Conn) {
+	defer connection.Close()
 
 	buffer := make([]byte, 1024)
 
-	reader := bufio.NewReader(c)
+	reader := bufio.NewReader(connection)
 	for {
 		n, err := reader.Read(buffer)
 		if err != nil {
@@ -47,11 +61,49 @@ func handle_connection(c net.Conn) {
 		receivedData := buffer[:n]
 		fmt.Printf("Received: %q\n", receivedData)
 
-		_, writeErr := c.Write([]byte("+PONG\r\n"))
+		command, data := func() (string, string) {
+			parsed := parseCommand(string(receivedData))
+			if len(parsed) == 1 {
+				parsed = append(parsed, "")
+			}
 
-		if writeErr != nil {
-			fmt.Println("Error write stream to client", err)
-			break
+			return parsed[0], parsed[1]
+		}()
+
+		switch command {
+		case CmdPing:
+			response := "+PONG\r\n"
+			_, writeErr := connection.Write([]byte(response))
+			if writeErr != nil {
+				fmt.Println("Error write stream to client", err)
+				break
+			}
+		case CmdEcho:
+			response := "$" + strconv.Itoa(len(data)) + "\r\n" + data + "\r\n"
+			_, writeErr := connection.Write([]byte(response))
+			if writeErr != nil {
+				fmt.Println("Error write stream to client", err)
+				break
+			}
 		}
 	}
+}
+
+func parseCommand(requestString string) []string {
+	re := regexp.MustCompile(`\d+\r\n([A-Za-z ]+)`)
+
+	numElements, _ := strconv.Atoi(string(requestString[0]))
+
+	for i := 0; i < numElements; i++ {
+		continue
+	}
+
+	matches := re.FindAllString(requestString, -1)
+	parsedCommand := []string{}
+
+	for _, match := range matches {
+		literal := strings.Split(match, "\r\n")[1]
+		parsedCommand = append(parsedCommand, literal)
+	}
+	return parsedCommand
 }
