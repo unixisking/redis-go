@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -24,8 +25,14 @@ const (
 	CmdGet  = "GET"
 )
 
+type item struct {
+	value      string
+	lastAccess int64
+	ttl        int
+}
+
 type DB struct {
-	entries map[string]string
+	items map[string]item
 }
 
 type CommandData struct {
@@ -33,32 +40,30 @@ type CommandData struct {
 	Args    []string
 }
 
-//TODO:commands should be case insensetive
-
 func main() {
 	fmt.Println("Server listening on port 6379...")
 
-	l, err := net.Listen("tcp", "0.0.0.0:6379")
+	listener, err := net.Listen("tcp", "0.0.0.0:6379")
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379")
 		os.Exit(1)
 	}
-	defer l.Close()
+	defer listener.Close()
 
-	db := DB{entries: make(map[string]string)}
+	db := DB{items: make(map[string]item)}
 
 	for {
-		connection, err := l.Accept()
+		connection, err := listener.Accept()
 		if err != nil {
 			fmt.Println("Error accepting connection: ", err.Error())
 			continue
 		}
 
-		go handle_connection(connection, db)
+		go handle_connection(connection, &db)
 	}
 }
 
-func handle_connection(connection net.Conn, db DB) {
+func handle_connection(connection net.Conn, db *DB) {
 	defer connection.Close()
 
 	buffer := make([]byte, 1024)
@@ -118,16 +123,17 @@ func handle_connection(connection net.Conn, db DB) {
 			key := data.Args[0]
 			val := data.Args[1]
 			response := "+OK\r\n"
-			db.entries[key] = val
+			// db.items[key] = item{value: val}
+			kvSet(key, val, db)
 			_, writeErr := connection.Write([]byte(response))
 			if writeErr != nil {
 				fmt.Println("Error write stream to client", err)
 				break
 			}
 		case strings.EqualFold(CmdGet, data.Command):
-			val, ok := db.entries[data.Args[0]]
-			if ok {
-				response := "$" + strconv.Itoa(len(val)) + "\r\n" + val + "\r\n"
+			it := kvGet(data.Args[0], db)
+			if it != nil {
+				response := "$" + strconv.Itoa(len(it.value)) + "\r\n" + it.value + "\r\n"
 				_, writeErr := connection.Write([]byte(response))
 				if writeErr != nil {
 					fmt.Println("Error write stream to client", err)
@@ -148,15 +154,10 @@ func handle_connection(connection net.Conn, db DB) {
 }
 
 func parseCommand(requestString string) []string {
-	re := regexp.MustCompile(`\d+\r\n([A-Za-z ]+)`)
-
-	numElements, _ := strconv.Atoi(string(requestString[0]))
-
-	for i := 0; i < numElements; i++ {
-		continue
-	}
+	re := regexp.MustCompile(`\d+\r\n([A-Za-z0-9 ]+)`)
 
 	matches := re.FindAllString(requestString, -1)
+	fmt.Printf("matches: %q", matches)
 	parsedCommand := []string{}
 
 	for _, match := range matches {
@@ -164,4 +165,28 @@ func parseCommand(requestString string) []string {
 		parsedCommand = append(parsedCommand, literal)
 	}
 	return parsedCommand
+}
+
+/**
+* Sets a value given a key, if it already exists update lastAccess timestamp
+* */
+func kvSet(key string, val string, db *DB) {
+	it, ok := db.items[key]
+	if !ok {
+		it = item{value: val}
+		db.items[key] = it
+	}
+	it.lastAccess = time.Now().Unix()
+}
+
+/**
+* gets a value given a key, return nil if it doesn't exist
+* */
+func kvGet(key string, db *DB) *item {
+	it, ok := db.items[key]
+	if !ok {
+		return nil
+	}
+	it.lastAccess = time.Now().Unix()
+	return &it
 }
